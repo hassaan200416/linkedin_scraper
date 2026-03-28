@@ -78,7 +78,7 @@ def _wait_for_profile_load(page: Page) -> bool:
     """
     try:
         # Wait for the h1 (name) to appear — confirms profile loaded
-        page.wait_for_selector("h1", timeout=15000)
+        page.wait_for_selector("h1", timeout=30000)
         return True
     except Exception:
         logger.warning("Profile page did not load in time.")
@@ -250,8 +250,9 @@ def scrape_profile(
         page.goto(
             profile_url,
             wait_until="domcontentloaded",
-            timeout=30000,
+            timeout=60000,
         )
+        time.sleep(3)
 
         # ── Step 2: Wait for profile to load ─────────────────
         loaded = _wait_for_profile_load(page)
