@@ -1,202 +1,171 @@
 # LinkedIn Profile Scraper
 
-A fully automated LinkedIn scraping tool built with Python. It logs into LinkedIn using your credentials, searches for people by keyword, visits each profile, extracts structured data, saves everything to a cloud database (Supabase), and exports a clean CSV file — all with zero manual effort after setup.
+A fully automated LinkedIn scraper built with Python and Playwright. Given a search keyword it logs into LinkedIn, collects profile URLs from the search results, visits each profile, extracts structured data, persists everything to a Supabase PostgreSQL database, and exports a flat CSV — with no manual steps after the initial setup.
 
 ---
 
-## What This Project Does
+## Table of Contents
 
-You type a keyword like `"Doctor"` or `"Data Scientist"` and the scraper:
-
-1. Opens a real Chrome browser automatically
-2. Logs into LinkedIn with your account
-3. Searches LinkedIn People for that keyword
-4. Collects all profile links from the search results
-5. Visits each profile one by one
-6. Extracts the following data from every profile:
-   - Full Name
-   - Job Title
-   - Location
-   - About / Bio section
-   - Complete Work Experience (all jobs, companies, durations)
-   - Up to 3 Recent Posts
-   - Email address (if publicly listed)
-7. Saves everything to a Supabase cloud database in real time
-8. Exports a clean Excel-ready CSV file at the end
+1. [What It Does](#what-it-does)
+2. [Architecture](#architecture)
+3. [Module Reference](#module-reference)
+4. [Prerequisites](#prerequisites)
+5. [Setup](#setup)
+6. [Supabase Database Schema](#supabase-database-schema)
+7. [Environment Variables](#environment-variables)
+8. [Running the Scraper](#running-the-scraper)
+9. [Output](#output)
+10. [Configuration Reference](#configuration-reference)
+11. [How Re-scraping Works](#how-re-scraping-works)
+12. [Known Limitations](#known-limitations)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
-## Who This Is For
+## What It Does
 
-- Recruiters building a talent database
-- Sales teams finding leads by profession
-- Researchers collecting professional data
-- Developers learning web scraping and automation
-- Anyone who wants LinkedIn data organized and exportable
-
----
-
-## Tech Stack
-
-| Tool                  | Purpose                                   |
-| --------------------- | ----------------------------------------- |
-| Python 3.11           | Core programming language                 |
-| Playwright            | Controls a real Chrome browser            |
-| Playwright Stealth    | Hides automation signals from LinkedIn    |
-| BeautifulSoup4        | Reads and parses HTML pages               |
-| Supabase (PostgreSQL) | Cloud database — stores all scraped data  |
-| psycopg2              | Connects Python directly to the database  |
-| Pandas                | Converts database data into CSV files     |
-| python-dotenv         | Loads credentials securely from .env file |
+1. Launches a real Chromium browser (with stealth patches to avoid bot detection)
+2. Logs into LinkedIn using your credentials, reusing saved session cookies on subsequent runs
+3. Searches LinkedIn People for your keyword across multiple pages
+4. Visits each profile and its `/recent-activity/all/` page
+5. Extracts: full name, job title, location, about/bio, all work experience, up to 3 recent posts, email (if public)
+6. Saves each profile to Supabase immediately after scraping (crash-safe)
+7. Exports a flat CSV of all profiles in the database at the end of the run
 
 ---
 
-## Project Structure
+## Architecture
 
 ```
-linkedin_scraper/
-│
-├── .env                        ← Your credentials (never share this)
-├── .gitignore                  ← Prevents credentials from being uploaded
-├── requirements.txt            ← All Python libraries listed here
-├── README.md                   ← This file
-├── session_cookies.json        ← Auto-created after first login
-│
-├── src/
-│   ├── main.py                 ← Entry point — run this to start scraping
-│   └── modules/
-│       ├── browser.py          ← Launches Chrome with stealth settings
-│       ├── auth.py             ← Handles LinkedIn login + session cookies
-│       ├── search.py           ← Searches LinkedIn by keyword, collects URLs
-│       ├── profile_scraper.py  ← Opens each profile + activity page
-│       ├── parser.py           ← Extracts data from raw HTML
-│       ├── database.py         ← Saves all data to Supabase
-│       ├── exporter.py         ← Exports data from Supabase to CSV
-│       └── logger.py           ← Logs all activity to terminal + log file
-│
-├── logs/                       ← Daily log files saved here automatically
-└── output/                     ← CSV exports saved here
+User Input (keyword, pages)
+        │
+        ▼
+   main.py  ──orchestrates──►  auth.py          login + cookie reuse
+                           ►  search.py         collect profile URLs
+                           ►  profile_scraper.py navigate + scroll each profile
+                                    └──────────► parser.py   HTML → structured data
+                           ►  database.py        persist to Supabase/PostgreSQL
+                           ►  exporter.py        dump DB → CSV
+
+   logger.py  ──shared by all modules── terminal + daily log file
 ```
 
----
+**Key design decisions:**
 
-## Database Structure
-
-The project uses 4 tables in Supabase. They are all connected through IDs.
-
-### `profiles` — One row per LinkedIn profile
-
-| Column           | Type      | Description                         |
-| ---------------- | --------- | ----------------------------------- |
-| id               | number    | Unique ID auto-assigned             |
-| linkedin_url     | text      | The profile's LinkedIn URL (unique) |
-| full_name        | text      | Person's full name                  |
-| job_title        | text      | Current job title                   |
-| location         | text      | City / country                      |
-| about            | text      | Their bio/about section             |
-| email            | text      | Email if publicly listed            |
-| keyword_searched | text      | The keyword that found this person  |
-| scraped_at       | timestamp | When this profile was scraped       |
-
-### `experience` — One row per job (multiple per person)
-
-| Column      | Type   | Description                         |
-| ----------- | ------ | ----------------------------------- |
-| id          | number | Unique ID                           |
-| profile_id  | number | Links to profiles table             |
-| company     | text   | Company name                        |
-| role        | text   | Job title at that company           |
-| duration    | text   | Time period e.g. Jan 2020 - Present |
-| description | text   | Role description if available       |
-
-### `posts` — Up to 3 rows per person
-
-| Column     | Type   | Description                            |
-| ---------- | ------ | -------------------------------------- |
-| id         | number | Unique ID                              |
-| profile_id | number | Links to profiles table                |
-| post_text  | text   | Full text of the post                  |
-| post_date  | text   | Date of the post                       |
-| post_order | number | 1 = most recent, 2 = second, 3 = third |
-
-### `scrape_sessions` — One row per scraping run
-
-| Column           | Type      | Description                                |
-| ---------------- | --------- | ------------------------------------------ |
-| id               | number    | Session ID                                 |
-| keyword          | text      | What was searched                          |
-| profiles_found   | number    | How many URLs were collected               |
-| profiles_scraped | number    | How many were successfully saved           |
-| started_at       | timestamp | When the run started                       |
-| finished_at      | timestamp | When the run ended                         |
-| status           | text      | running / completed / failed / interrupted |
+- **Save-on-scrape:** each profile is written to the database immediately after it is scraped, not batched at the end. A crash mid-run does not lose already-scraped data.
+- **Upsert by URL:** re-running the same keyword refreshes existing profiles rather than creating duplicates. Experience and posts are fully replaced on each re-scrape.
+- **Separate activity page:** LinkedIn does not render posts on the main profile page. The scraper visits `/recent-activity/all/` as a separate request per profile.
+- **Direct PostgreSQL connection:** `database.py` connects via `psycopg2` directly to Supabase's PostgreSQL endpoint instead of the Supabase REST client, which proved unreliable on restricted networks.
 
 ---
 
-## Setup Guide
+## Module Reference
 
-### Step 1 — Requirements
-
-- Windows / Mac / Linux
-- Python 3.11 installed
-- A LinkedIn account
-- A free Supabase account (supabase.com)
-- VS Code (recommended)
+| File | Responsibility |
+|---|---|
+| `src/main.py` | Entry point. Reads `.env`, runs the full pipeline, handles `KeyboardInterrupt` and errors. |
+| `src/modules/browser.py` | Launches Chromium with stealth patches, random user-agent and viewport per session. |
+| `src/modules/auth.py` | Logs into LinkedIn. Saves session cookies after first login; reuses them on subsequent runs. Handles CAPTCHA with a 60-second manual-solve window. |
+| `src/modules/search.py` | Paginates LinkedIn people search, scrolls each page to trigger lazy load, returns a deduplicated list of profile URLs. |
+| `src/modules/profile_scraper.py` | Navigates to each profile URL, scrolls to trigger lazy-loaded sections, navigates to the activity page for posts. |
+| `src/modules/parser.py` | Pure HTML → data extraction using BeautifulSoup. No browser dependency. Exports `ProfileData`, `ExperienceEntry`, `PostEntry` TypedDicts. |
+| `src/modules/database.py` | All PostgreSQL operations: create/finish scrape sessions, upsert profiles, replace experience and posts. |
+| `src/modules/exporter.py` | Fetches all profiles from the database (note: all rows, not keyword-filtered), joins with experience and posts, writes a flat CSV. |
+| `src/modules/logger.py` | Single shared `logging.Logger` instance. `INFO` to terminal, `DEBUG` to a daily log file in `logs/`. |
 
 ---
 
-### Step 2 — Clone or Download the Project
+## Prerequisites
+
+- **Python 3.11** — other versions may work but are untested
+- **pip** — comes with Python
+- **A LinkedIn account** — the scraper logs in as you
+- **A Supabase account** — free tier is sufficient ([supabase.com](https://supabase.com))
+- **Chrome/Chromium** — installed by Playwright automatically (see setup below)
+
+---
+
+## Setup
+
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/yourusername/linkedin_scraper.git
 cd linkedin_scraper
 ```
 
----
-
-### Step 3 — Create a Virtual Environment
+### 2. Create and activate a virtual environment
 
 ```bash
 python3.11 -m venv venv
 ```
 
-Activate it:
-
 **Windows:**
-
 ```bash
 venv\Scripts\activate
 ```
 
 **Mac / Linux:**
-
 ```bash
 source venv/bin/activate
 ```
 
-You will see `(venv)` appear in your terminal. This means it is active.
+You should see `(venv)` in your terminal prompt.
 
----
-
-### Step 4 — Install All Libraries
+### 3. Install Python dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Then install the Chrome browser that Playwright uses:
+### 4. Install Playwright's Chromium browser
+
+This downloads the actual browser binary Playwright controls:
 
 ```bash
 playwright install chromium
 ```
 
+### 5. Set up Supabase
+
+1. Create a free account at [supabase.com](https://supabase.com)
+2. Create a new project (name it anything)
+3. Open the **SQL Editor** and run the schema below to create all four tables
+4. Go to **Project Settings → Database** and copy the **Connection string (URI)** — this is your `SUPABASE_DB_URL`
+5. Go to **Project Settings → API** and copy the **Project URL** and **anon/public key** — these are `SUPABASE_URL` and `SUPABASE_KEY`
+
+### 6. Configure your `.env` file
+
+Create a `.env` file in the project root (same level as `requirements.txt`):
+
+```env
+# LinkedIn credentials
+LINKEDIN_EMAIL=your_email@example.com
+LINKEDIN_PASSWORD=your_password
+
+# Supabase — direct PostgreSQL connection string
+# Found in: Supabase dashboard → Project Settings → Database → Connection string (URI)
+SUPABASE_DB_URL=postgresql://postgres.yourprojectid:yourpassword@aws-region.pooler.supabase.com:5432/postgres
+
+# Supabase — REST API credentials (used for the initial connection check)
+# Found in: Supabase dashboard → Project Settings → API
+SUPABASE_URL=https://yourprojectid.supabase.co
+SUPABASE_KEY=your_anon_public_key
+
+# Scraper behaviour
+MAX_PAGES=3        # pages of search results per run (~10 profiles per page)
+MIN_DELAY=4        # minimum seconds to wait between profile visits
+MAX_DELAY=8        # maximum seconds to wait between profile visits
+HEADLESS=False     # False = browser window visible; True = runs in background
+```
+
+> `.env` is listed in `.gitignore` and will never be committed to Git. Never share this file.
+
 ---
 
-### Step 5 — Set Up Supabase
+## Supabase Database Schema
 
-1. Go to [supabase.com](https://supabase.com) and create a free account
-2. Create a new project called `linkedin_scraper`
-3. Go to **SQL Editor** and run the following SQL to create all tables:
+Run this SQL in your Supabase SQL Editor exactly once, before first use:
 
 ```sql
 CREATE TABLE profiles (
@@ -212,20 +181,20 @@ CREATE TABLE profiles (
 );
 
 CREATE TABLE experience (
-    id           BIGSERIAL PRIMARY KEY,
-    profile_id   BIGINT REFERENCES profiles(id) ON DELETE CASCADE,
-    company      TEXT,
-    role         TEXT,
-    duration     TEXT,
-    description  TEXT
+    id          BIGSERIAL PRIMARY KEY,
+    profile_id  BIGINT REFERENCES profiles(id) ON DELETE CASCADE,
+    company     TEXT,
+    role        TEXT,
+    duration    TEXT,
+    description TEXT
 );
 
 CREATE TABLE posts (
-    id          BIGSERIAL PRIMARY KEY,
-    profile_id  BIGINT REFERENCES profiles(id) ON DELETE CASCADE,
-    post_text   TEXT,
-    post_date   TEXT,
-    post_order  INT
+    id         BIGSERIAL PRIMARY KEY,
+    profile_id BIGINT REFERENCES profiles(id) ON DELETE CASCADE,
+    post_text  TEXT,
+    post_date  TEXT,
+    post_order INT   -- 1 = most recent, 2 = second, 3 = third
 );
 
 CREATE TABLE scrape_sessions (
@@ -235,228 +204,159 @@ CREATE TABLE scrape_sessions (
     profiles_scraped INT DEFAULT 0,
     started_at       TIMESTAMPTZ DEFAULT NOW(),
     finished_at      TIMESTAMPTZ,
-    status           TEXT DEFAULT 'running'
+    status           TEXT DEFAULT 'running'  -- running / completed / failed / interrupted
 );
 ```
 
-4. Go to **Project Settings → Database** and copy your connection URI
-5. Go to **Project Settings → API Keys** and copy your Publishable key
+---
+
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `LINKEDIN_EMAIL` | Yes | Your LinkedIn login email |
+| `LINKEDIN_PASSWORD` | Yes | Your LinkedIn login password |
+| `SUPABASE_DB_URL` | Yes | PostgreSQL connection URI from Supabase dashboard |
+| `SUPABASE_URL` | Yes | Supabase project REST URL |
+| `SUPABASE_KEY` | Yes | Supabase anon/public API key |
+| `MAX_PAGES` | No | Search result pages to scrape per run (default: `3`) |
+| `MIN_DELAY` | No | Min seconds between profile visits (default: `4`) |
+| `MAX_DELAY` | No | Max seconds between profile visits (default: `8`) |
+| `HEADLESS` | No | `True` hides the browser window (default: `False`) |
 
 ---
 
-### Step 6 — Configure Your .env File
+## Running the Scraper
 
-Create a file called `.env` in the root of the project and fill in your details:
-
-```env
-# LinkedIn Account
-LINKEDIN_EMAIL=your_linkedin_email@gmail.com
-LINKEDIN_PASSWORD=your_linkedin_password
-
-# Supabase Direct Database Connection
-SUPABASE_DB_URL=postgresql://postgres:yourpassword@db.yourprojectid.supabase.co:5432/postgres
-
-# Supabase API (used for initial connection check)
-SUPABASE_URL=https://yourprojectid.supabase.co
-SUPABASE_KEY=your_publishable_key_here
-
-# Scraper Settings
-MAX_PAGES=3
-MIN_DELAY=4
-MAX_DELAY=8
-HEADLESS=False
-```
-
-> **Important:** Never share your `.env` file or commit it to GitHub. It is already listed in `.gitignore` for your protection.
-
----
-
-## How to Run
-
-Make sure your virtual environment is active, then run:
+Make sure your virtual environment is active, then:
 
 ```bash
 python -m src.main
 ```
 
-You will see:
+You will be prompted for:
+
+```
+Enter keyword to search (e.g. 'Data Scientist'):  Doctor
+How many pages to scrape? (default 3, each page ~10 profiles):  2
+```
+
+The browser opens, logs in, and starts scraping. You can watch it work in the browser window (when `HEADLESS=False`).
+
+When complete:
 
 ```
 ============================================================
-  LinkedIn Profile Scraper
+  Scraping Complete!
 ============================================================
-
-Enter keyword to search (e.g. 'Data Scientist'):
+  Keyword:          Doctor
+  Profiles found:   21
+  Profiles scraped: 19
+  CSV saved to:     output/linkedin_doctor_20260329_143022.csv
+============================================================
 ```
 
-Type your keyword and press Enter. Then:
-
-```
-How many pages to scrape? (default 3, each page ~10 profiles):
-```
-
-Type a number and press Enter. The scraper will start automatically.
-
----
-
-## What You Will See While It Runs
-
-**In your terminal:**
-
-```
-[INFO] Connecting to Supabase...
-[INFO] Browser launched
-[INFO] Login successful
-[INFO] Searching LinkedIn for: 'Doctor'
-[INFO] Found 11 profiles on page 1
-[INFO] [1/32] Scraping: linkedin.com/in/dr-ramisha...
-[INFO] Parsed: Dr. Ramisha Fatima | Public Health Professional
-[INFO] Profile saved (ID: 1)
-...
-[INFO] CSV exported: output/linkedin_doctor_20260319.csv
-```
-
-**In your Chrome window:**
-
-- Browser opens and logs into LinkedIn
-- Searches your keyword
-- Opens each profile one by one
-- Scrolls through each profile
-- Visits the activity page for posts
-- Closes when done
+To stop mid-run, press `Ctrl+C`. The session will be marked as `interrupted` in the database and any profiles already scraped will be preserved.
 
 ---
 
 ## Output
 
-After the run completes you get two outputs:
+### CSV file
 
-### 1. CSV File
+Saved to `output/` with a timestamp in the filename. Each row is one LinkedIn profile. Columns:
 
-Saved in the `output/` folder with a timestamp in the filename.
-Open it in Excel or Google Sheets. Each row is one LinkedIn profile.
+| Column | Description |
+|---|---|
+| `full_name` | Person's full name |
+| `job_title` | Current job title |
+| `location` | City / country |
+| `email` | Email address (often empty — only public ones are found) |
+| `about` | Bio/About section |
+| `experience` | All jobs joined as: `Role @ Company (Duration) \| Role @ Company (Duration)` |
+| `post_1` | Most recent post text |
+| `post_2` | Second most recent post text |
+| `post_3` | Third most recent post text |
+| `linkedin_url` | Full profile URL |
+| `keyword_searched` | The keyword that found this person |
+| `scraped_at` | Timestamp of when the profile was scraped |
 
-Columns: `full_name`, `job_title`, `location`, `email`, `about`, `experience`, `post_1`, `post_2`, `post_3`, `linkedin_url`, `keyword_searched`, `scraped_at`
+> **Note:** The CSV export pulls ALL profiles currently in the database, not just those from the most recent run. This is by design — it gives you the full accumulated dataset in one file. The `keyword_searched` column lets you filter by run in Excel or SQL.
 
-### 2. Supabase Database
+### Supabase database
 
-All data is stored live in your Supabase project. You can:
+All data is stored live in your Supabase project. You can query it directly in the Supabase SQL Editor, connect it to a dashboard, or share it with teammates.
 
-- View it in the Supabase Table Editor
-- Query it with SQL
-- Connect it to any frontend or dashboard
-- Share access with your team
+### Log files
 
----
-
-## Settings You Can Change
-
-All settings are in your `.env` file:
-
-| Setting   | Default | Description                               |
-| --------- | ------- | ----------------------------------------- |
-| MAX_PAGES | 3       | Pages of search results to scrape per run |
-| MIN_DELAY | 4       | Minimum seconds to wait between profiles  |
-| MAX_DELAY | 8       | Maximum seconds to wait between profiles  |
-| HEADLESS  | False   | Set to True to hide the browser window    |
-
-**Tip:** Keep `HEADLESS=False` during development so you can see what is happening. Set it to `True` for background runs.
+Saved to `logs/` named by date (e.g. `2026-03-29.log`). Terminal shows `INFO` level; the file contains full `DEBUG` detail including every warning and error.
 
 ---
 
-## Tips for Getting More Data
+## Configuration Reference
 
-- Run the scraper with different keywords to build a larger database:
+### Delay settings
 
-```
-  "Doctor" → "Medical Doctor" → "Physician" → "Surgeon" → "MBBS"
-```
+`MIN_DELAY` and `MAX_DELAY` control how long the scraper waits between visiting profiles. A random value between the two is chosen each time. These delays are what prevent LinkedIn from detecting and rate-limiting your account. Do not set them below `3` / `5`.
 
-- Each keyword finds different people
-- All results save to the same database without duplicates
-- Every LinkedIn profile URL is unique — running the same keyword twice just refreshes existing data
+### Page count
 
----
+Each page of LinkedIn search results contains approximately 10 profiles. `MAX_PAGES=3` will scrape around 30 profiles per keyword. The actual number may be slightly lower if some profiles fail to load or are private.
 
-## Important Limitations
+### Headless mode
 
-| Limitation                                      | Reason                                                                |
-| ----------------------------------------------- | --------------------------------------------------------------------- |
-| Names may show "LinkedIn respects your privacy" | Some users set their profile to private — only visible to connections |
-| Emails are usually empty                        | LinkedIn hides emails unless the person made them public              |
-| ~10 profiles per page                           | LinkedIn's search shows 10 results per page                           |
-| Scraping speed is intentionally slow            | Random 4-8 second delays between profiles prevent account bans        |
-| Posts may be empty for some profiles            | Some users have not posted publicly or have their activity hidden     |
+`HEADLESS=False` (the default) shows the browser window. Use this during development to see what is happening and to solve CAPTCHA challenges manually. Set `HEADLESS=True` for unattended background runs.
 
 ---
 
-## How the Code Works — Simple Explanation
+## How Re-scraping Works
 
-```
-main.py starts
-    │
-    ├── Connects to Supabase database
-    ├── Asks you for a keyword
-    ├── Opens Chrome browser (browser.py)
-    ├── Logs into LinkedIn (auth.py)
-    │       └── Reuses saved cookies if available
-    │           Otherwise logs in fresh and saves cookies
-    │
-    ├── Searches LinkedIn (search.py)
-    │       └── Collects all profile URLs from search results
-    │
-    ├── Creates a scrape session in the database
-    │
-    └── For each profile URL:
-            ├── Opens the profile (profile_scraper.py)
-            ├── Scrolls to load all sections
-            ├── Extracts HTML and parses data (parser.py)
-            │       ├── Name, title, location, about, email
-            │       └── Work experience entries
-            ├── Visits the activity page for posts
-            │       └── Up to 3 unique recent posts
-            ├── Saves everything to Supabase (database.py)
-            └── Waits 4-8 random seconds before next profile
+Running the scraper again with the same keyword does not create duplicate records. The `profiles` table has a `UNIQUE` constraint on `linkedin_url`. When a profile URL already exists:
 
-    └── Exports full CSV from database (exporter.py)
-```
+1. The profile row is **updated** with fresh data (name, title, location, about, email)
+2. All old `experience` rows for that profile are **deleted and re-inserted**
+3. All old `posts` rows for that profile are **deleted and re-inserted**
+
+This means you can re-run keywords periodically to keep the data fresh.
 
 ---
 
-## Logging
+## Known Limitations
 
-Every action is logged in two places:
-
-1. **Terminal** — you see INFO level logs in real time while it runs
-2. **Log file** — saved in `logs/` folder, named by date e.g. `2026-03-19.log`
-
-Log files contain DEBUG level detail including every warning and error. Useful for diagnosing issues after a run.
-
----
-
-## Security Notes
-
-- Your LinkedIn credentials are stored only in your local `.env` file
-- Nothing is sent to any third party server
-- Session cookies are saved locally in `session_cookies.json`
-- The `.gitignore` file prevents `.env` and cookies from being committed to Git
-- The Supabase publishable key is safe to use in backend scripts
+| Limitation | Details |
+|---|---|
+| Private profiles | Some users restrict profile visibility to connections only. The scraper will see "LinkedIn Member" or a limited view. |
+| Emails are usually empty | LinkedIn hides contact info unless the person has explicitly made their email public in their profile. |
+| ~10 profiles per page | LinkedIn's people search always returns approximately 10 results per page. |
+| Scraping is intentionally slow | 4–8 second random delays between profiles are necessary to avoid account bans. Expect ~6 minutes per 30 profiles. |
+| Posts may be empty | Many users do not post publicly or have their activity set to private. |
+| LinkedIn HTML changes | LinkedIn regularly updates their CSS class names. If parsing starts returning empty fields, inspect the page and update the selectors in `parser.py`. |
+| Single account only | The scraper runs as a single logged-in user. LinkedIn may flag the account if it scrapes too aggressively. |
 
 ---
 
 ## Troubleshooting
 
-**Browser does not open:**
-Make sure you ran `playwright install chromium`
+**`ModuleNotFoundError: playwright` or similar on first run**
+You are not inside the virtual environment. Run `venv\Scripts\activate` (Windows) or `source venv/bin/activate` (Mac/Linux) and then run again.
 
-**Login fails:**
-Check your email and password in `.env`. LinkedIn may also ask for CAPTCHA verification — solve it manually in the browser window when prompted.
+**`playwright install chromium` fails**
+Run it with admin/sudo privileges or check your network proxy settings.
 
-**Database connection fails:**
-Make sure your VPN is on if you are in a region that blocks Supabase. Check your `SUPABASE_DB_URL` is correct in `.env`.
+**Browser opens but login fails**
+- Check `LINKEDIN_EMAIL` and `LINKEDIN_PASSWORD` in `.env` are correct
+- LinkedIn may prompt for CAPTCHA verification — when prompted, the scraper waits up to 60 seconds for you to solve it manually in the open browser window
+- If LinkedIn shows a "verify it's you" step via email/phone, complete it and the scraper will resume
 
-**Names showing as "LinkedIn respects your privacy":**
-This is a LinkedIn privacy setting on the other user's account. Not fixable — their name is simply not public.
+**`could not connect to server` database error**
+- Confirm `SUPABASE_DB_URL` is the full PostgreSQL URI from Supabase, not the REST API URL
+- Your IP or network may block outbound connections to Supabase on port 5432 — try a different network or enable a VPN
 
-**Posts are empty for most profiles:**
-Most LinkedIn users do not post publicly or have their activity set to private. This is normal.
+**Profiles scraping but all fields are empty**
+LinkedIn changed their HTML. Open a profile in your browser, inspect the element you want, and update the relevant selector in `src/modules/parser.py`.
+
+**`session_cookies.json` causes instant logout on load**
+Delete the file and the scraper will perform a fresh login on the next run.
+
+**`KeyError` or `TypeError` in `database.py`**
+Confirm your Supabase tables were created with the exact schema above. A missing column or wrong type will cause insert failures.

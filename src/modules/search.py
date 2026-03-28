@@ -14,6 +14,8 @@ from .logger import logger
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
+# origin=GLOBAL_SEARCH_HEADER mimics a search triggered from LinkedIn's top nav bar.
+# Without it, LinkedIn may classify the request as a bot probe and throttle results.
 SEARCH_URL = "https://www.linkedin.com/search/results/people/?keywords={keyword}&origin=GLOBAL_SEARCH_HEADER"
 
 

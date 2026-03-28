@@ -44,12 +44,16 @@ def get_db_connection() -> psycopg2.extensions.connection:
         raise
 
 
-# ── Keep get_supabase_client as alias so main.py doesn't break ───────────────
+# ── Legacy alias ─────────────────────────────────────────────────────────────
+# Originally this module used the Supabase Python REST client.
+# It was later replaced with a direct psycopg2 connection for reliability.
+# get_supabase_client() is kept as a stable public name so callers
+# (main.py, exporter.py) don't need to know about the underlying change.
 
 def get_supabase_client() -> psycopg2.extensions.connection:
     """
-    Alias for get_db_connection.
-    Keeps main.py working without changes.
+    Returns a direct PostgreSQL connection to the Supabase database.
+    Legacy name kept for API stability — delegates to get_db_connection().
     """
     return get_db_connection()
 

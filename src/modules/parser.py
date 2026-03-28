@@ -27,6 +27,7 @@ Soup = Any
 
 
 class ExperienceEntry(TypedDict):
+    """One work history entry extracted from the Experience section."""
     role: str
     company: str
     duration: str
@@ -34,12 +35,14 @@ class ExperienceEntry(TypedDict):
 
 
 class PostEntry(TypedDict):
+    """One post extracted from the profile's activity feed."""
     post_text: str
     post_date: str
-    post_order: int
+    post_order: int  # 1 = most recent
 
 
 class ProfileData(TypedDict):
+    """Complete parsed data for a single LinkedIn profile."""
     linkedin_url: str
     full_name: str
     job_title: str
@@ -52,7 +55,10 @@ class ProfileData(TypedDict):
 
 
 def _class_contains(value: Any, fragment: str) -> bool:
-    """Returns True when a class attr value contains the given fragment."""
+    """
+    Returns True when a BS4 class attribute value contains the given fragment.
+    Handles both string and list class values (BS4 returns either depending on the tag).
+    """
     if isinstance(value, str):
         return fragment in value
     if isinstance(value, list):
@@ -62,14 +68,17 @@ def _class_contains(value: Any, fragment: str) -> bool:
 
 
 def _is_text_body_medium(value: Any) -> bool:
+    """Matches LinkedIn's job title class pattern."""
     return _class_contains(value, "text-body-medium")
 
 
 def _is_text_body_small(value: Any) -> bool:
+    """Matches LinkedIn's location/subtitle class pattern."""
     return _class_contains(value, "text-body-small")
 
 
 def _is_display_flex(value: Any) -> bool:
+    """Matches the flex container LinkedIn uses for the About section body."""
     return _class_contains(value, "display-flex")
 
 

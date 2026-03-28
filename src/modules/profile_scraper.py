@@ -312,9 +312,12 @@ def scrape_all_profiles(
     max_delay: int = 8,
 ) -> list[ProfileData]:
     """
-    Scrapes a list of LinkedIn profile URLs one by one.
-    Skips failed profiles and continues with the rest.
-    Logs progress throughout.
+    Batch-scrapes a list of LinkedIn profile URLs and returns results in memory.
+
+    NOTE: main.py drives its own scraping loop and saves each profile to the
+    database immediately after scraping. This function is a convenience wrapper
+    that collects all results first and returns them as a list — useful for
+    standalone use or testing, but not called by main.py's pipeline.
 
     Args:
         page:         Playwright page instance.

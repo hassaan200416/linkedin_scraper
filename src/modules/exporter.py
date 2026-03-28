@@ -182,17 +182,22 @@ def _flatten_profile(
 
 def export_to_csv(client: psycopg2.extensions.connection, keyword: str = "all") -> str:
     """
-    Fetches all data from Supabase and exports it to a CSV file.
+    Fetches ALL profiles from the database and exports them to a CSV file.
     Each row in the CSV is one LinkedIn profile with all their
     data flattened into columns.
 
+    NOTE: This exports every profile in the database, regardless of keyword.
+    The keyword parameter only affects the output filename — it is not used
+    to filter rows. To export a keyword-specific subset, query the profiles
+    table directly with a WHERE keyword_searched = '...' clause.
+
     Args:
-        client:  Connected Supabase client.
-        keyword: Used in the filename to identify what was searched.
-                 Defaults to 'all' if exporting everything.
+        client:  psycopg2 connection.
+        keyword: Included in the output filename for easy identification.
+                 Defaults to 'all'.
 
     Returns:
-        Full path to the exported CSV file.
+        Full path to the exported CSV file, or empty string if no data.
     """
 
     logger.info("Starting CSV export from Supabase...")
